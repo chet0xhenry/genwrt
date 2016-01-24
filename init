@@ -1,0 +1,11 @@
+#!/bin/bash
+
+#copy paist
+useradd -m -G users,wheel admin
+passwd admin
+
+/etc/init.d/sshd start
+
+passwd
+
+rsync ./* henry@192.168.56.102:~

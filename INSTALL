@@ -1,0 +1,4 @@
+#!/bin/bash
+
+echo "Changing user to root..."
+su -- ./initChroot

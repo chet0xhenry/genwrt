@@ -1,0 +1,141 @@
+#!/bin/bash
+source /etc/profile
+export PS1="(chroot) $PS1"
+
+read -p "Router name? ([genwrt]): " NAME 
+NAME=${NAME:-"genwrt"}
+
+read -p "Router admin user name? ([admin]): " ADMIN_NAME 
+ADMIN_NAME=${ADMIN_NAME:-"admin"}
+useradd -m -G users,wheel $ADMIN_NAME
+echo "Set admin password:"
+passwd $ADMIN_NAME
+
+read -p "PPPoE? ([yes]|no): " PPPOE
+PPPOE=${PPPOE:-"yes"}
+
+if ["$PPPOE" = "yes" ]; then
+    read -p "PPPoE username: " PPPOE_USERNAME
+    read -p "PPPoE password: " PPPOE_PASSWORD
+fi
+
+read -p "Wifi? ([yes]|no): " WIFI 
+WIFI=${WIFI:-"yes"}
+
+if ["$WIFI" = "yes" ]; then
+    read -p "Wifi SSID: " WIFI_SSID 
+    read -p "Wifi password: " WIFI_PASSWORD 
+fi
+
+#emerge -C sys-apps/man-db sys-apps/man-pages sys-apps/man-pages-posix virtual/man sys-apps/help2man app-text/build-docbook-catalog app-text/docbook-xml-dtd app-text/docbook-xsl-stylesheets app-text/manpager app-editors/nano
+
+echo "Updating Gentoo..."
+config 2
+emerge --sync --quiet
+emerge gentoolkit
+emerge -u sys-devel/gcc
+
+gcc-config -l
+gcc-config 2
+env-update && source /etc/profile
+emerge --oneshot libtool
+revdep-rebuild --library 'libstdc++.so.5' -- --exclude gcc
+revdep-rebuild --library 'libstdc++.so.6' -- --exclude gcc
+gcc --version
+emerge -C =sys-devel/gcc-4.9.3
+eselect profile set 11
+env-update && source /etc/profile
+emerge --oneshot portage
+
+emerge -uDU --with-bdeps=y @world
+emerge --update --newuse --deep --with-bdeps=y @world
+emerge --depclean
+
+echo "America/Denver" > /etc/timezone
+
+sed -i 's/#en_US ISO-8859-1/en_US ISO-8859-1/g' /etc/locale.gen
+sed -i 's/#en_US.UTF-8 UTF-8/en_US.UTF-8 UTF-8/g' /etc/locale.gen
+
+locale-gen
+
+eselect locale set 4
+env-update && source /etc/profile
+emerge @preserved-rebuild
+emerge --depclean
+
+echo "Installing extra packages..."
+#emerge sys-kernel/gentoo-sources
+emerge sys-kernel/git-sources\
+    sys-kernel/linux-firmware\
+    app-editors/vim\
+    sys-process/cronie\
+    net-misc/dhcpcd\
+    net-dialup/ppp\
+    sys-boot/grub\
+    net-dns/dnsmasq\
+    app-admin/sudo\
+    net-wireless/hostapd\
+    net-misc/bridge-utils\
+    sys-apps/haveged
+emerge --prune
+
+emerge --emptytree --newuse world
+
+echo "Making linux kernel..."
+cd /usr/src/linux
+#make menuconfig
+cp /linux.config ./.config
+make
+mount /dev/sda2 /boot
+/bin/bash -c 'echo "run \"make menuconfig\" to configure keral to add drivers for devices.  Run exit when finished."; /bin/bash' 
+make install
+
+sed -i 's/\/dev\/SWAP.*//g' /etc/fstab
+sed -i 's/\/dev\/cdrom.*//g' /etc/fstab
+sed -i 's/\/dev\/fd0.*//g' /etc/fstab
+sed -i 's/BOOT/sda2/g' /etc/fstab
+sed -i 's/ROOT/sda3/g' /etc/fstab
+sed -i 's/ext2/vfat/g' /etc/fstab
+sed -i 's/ext3/ext4/g' /etc/fstab
+
+echo "Installing extra packages..."
+sed -i "s/localhost/$NAME/g" /etc/conf.d/hostname
+
+echo 'dns_domain_lo="genwrt"' > /etc/conf.d/net
+if ["$PPPOE" = "yes" ]; then
+    echo 'config_ppp0="ppp"' > /etc/conf.d/net
+    echo 'link_ppp0="enp0s3"' > /etc/conf.d/net
+    echo 'plugins_ppp0="pppoe"' > /etc/conf.d/net
+    echo 'pppd_ppp0="defaultroute usepeerdns"' > /etc/conf.d/net
+    echo "username_ppp0=\"$PPPOE_USERNAME\"" > /etc/conf.d/net
+    echo "password_ppp0=\"$PPPOE_PASSWORD\"" > /etc/conf.d/net
+fi
+echo 'config_enp0s8="192.168.0.1/24 brd 192.168.0.255"' >> /etc/conf.d/net
+
+sed -i 's/#dhcp-range=192.168.0.50,192.168.0.150,12h/dhcp-range=192.168.0.50,192.168.0.150,72h/g' /etc/dnsmasq.conf 
+sed -i 's/#interface=/interface=eth1/g' /etc/dnsmasq.conf 
+
+sed -i 's/# %wheel ALL=(ALL) NOPASSWD: ALL/%wheel ALL=(ALL) NOPASSWD: ALL/g' /etc/sudoers 
+
+#TODO: https://wiki.gentoo.org/wiki/Ethernet_plus_WiFi_Bridge_Router_and_Firewall
+
+cd /etc/init.d
+#ln -s net.lo net.enp0s3
+ln -s net.lo net.enp0s8
+ln -s net.lo net.ppp0
+
+rc-update add net.ppp0 default
+#rc-update add net.enp0s3 default
+rc-update add net.enp0s8 default
+
+rc-update add cronie default
+
+rc-update add sshd default
+
+rc-update add dnsmasq default
+
+grub2-install /dev/sda
+grub2-mkconfig -o /boot/grub/grub.cfg
+
+#emerge --ask sys-boot/efibootmgr
+#efibootmgr --create --disk /dev/sda --part 2 --label "Gentoo" --loader "\efi\boot\bootx64.efi"

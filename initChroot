@@ -1,0 +1,66 @@
+#!/bin/bash
+
+echo "Setup Partitions..."
+parted /dev/sda -a optimal mklabel gpt 
+
+parted /dev/sda -a optimal mkpart primary 1 3
+parted /dev/sda -a optimal name 1 grub 
+parted /dev/sda -a optimal set 1 bios_grub on
+
+parted /dev/sda -a optimal -- mkpart primary 3 128
+parted /dev/sda -a optimal name 2 bootfs 
+parted /dev/sda -a optimal set 2 boot on
+
+parted /dev/sda -a optimal -- mkpart primary 128 -1
+parted /dev/sda -a optimal name 3 rootfs
+
+echo "Format Partitions..."
+#vbonly
+#mke2fs -j -T small /dev/sda2
+mkfs.vfat /dev/sda2
+mkfs.ext4 /dev/sda3
+
+echo "Mounting Partitions..."
+mount /dev/sda3 /mnt/gentoo
+cp -L /etc/resolv.conf /mnt/gentoo/etc/
+cp linux.config /mnt/gentoo/
+cp initGentoo /mnt/gentoo/
+cp install /mnt/gentoo/
+
+mount -t proc proc /mnt/gentoo/proc
+mount --rbind /sys /mnt/gentoo/sys
+mount --make-rslave /mnt/gentoo/sys
+mount --rbind /dev /mnt/gentoo/dev
+mount --make-rslave /mnt/gentoo/dev
+mount /dev/sda2 /mnt/gentoo/boot
+
+echo "Downloading Stage3..."
+curl http://gentoo.osuosl.org/releases/amd64/autobuilds/current-stage3-amd64-nomultilib/stage3-amd64-20160114.tar.bz2 > /mnt/gentoo/stage3.tar.bz2
+tar xvjpf stage3.tar.bz2 --xattrs
+
+echo "Setup make.conf..."
+sed -i 's/CFLAGS="-O2 -pipe"/CFLAGS="-O2 -march=native -pipe"/g' /mnt/gentoo/etc/portage/make.conf 
+echo 'MAKEOPTS="-j32"' >> /mnt/gentoo/etc/portage/make.conf
+echo 'ACCEPT_LICENSE="*"' >> /mnt/gentoo/etc/portage/make.conf
+echo 'ALSA_CARDS=""' >> /mnt/gentoo/etc/portage/make.conf
+echo 'APACHE2_MODULES=""' >> /mnt/gentoo/etc/portage/make.conf
+echo 'LIBREOFFICE_EXTENSIONS=""' >> /mnt/gentoo/etc/portage/make.conf
+echo 'OFFICE_IMPLEMENTATION=""' >> /mnt/gentoo/etc/portage/make.conf
+echo 'CALLIGRA_FEATURES=""' >> /mnt/gentoo/etc/portage/make.conf
+echo 'GPSD_PROTOCOLS=""' >> /mnt/gentoo/etc/portage/make.conf
+echo 'CAMERAS=""' >> /mnt/gentoo/etc/portage/make.conf
+echo 'VIDEO_CARDS="fbdev intel"' >> /mnt/gentoo/etc/portage/make.conf
+#echo GRUB_PLATFORMS="efi-64" >> /mnt/gentoo/etc/portage/make.conf
+echo ACCEPT_KEYWORDS="~amd64" >> /mnt/gentoo/etc/portage/make.conf
+
+#emerge --ask app-portage/cpuinfo2cpuflags
+#cpuinfo2cpuflags-x86
+
+echo "Starting chroot..."
+chroot /mnt/gentoo /initGentoo
+
+echo "Rebooting, remove CD before it restarts..."
+cd /
+umount -l /mnt/gentoo/dev{/shm,/pts,}
+umount /mnt/gentoo{/boot,/sys,/proc,}
+reboot
