@@ -1,4 +1,4 @@
-# genRouter
+# genwrt
 Gentoo Router Setup Scripts with Wifi
 
 ### Init (setup ssh and start scripts)
